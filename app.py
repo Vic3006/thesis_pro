@@ -1,29 +1,32 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-OSTEO-AI  |  Sistema multimodal de cribado de osteoporosis (3 clases)
-Dashboard de demostración para defensa de tesis (puerta cerrada) — v2 (estética)
+OSTEO-AI | Sistema multimodal de cribado de osteoporosis (3 clases) — v3
+Dashboard para defensa de tesis (puerta cerrada).
+Autores: César José Toledo Sánchez · Victor Hugo Martínez Ramírez · Tec CCM 2026
 
-Autores: César José Toledo Sánchez · Victor Hugo Martínez Ramírez
-Tec de Monterrey CCM · Ingeniería Biomédica · 2026
-
-DISEÑO DEFENDIBLE: ramas tabular e imagen evaluadas por SEPARADO (dos semáforos).
-NO se fusiona probabilidad por paciente (cohortes no emparejadas).
-DEMO_MODE=True entrena el modelo tabular al vuelo sobre patient_clean_ML.csv.
+DISEÑO DEFENDIBLE: ramas tabular e imagen por SEPARADO (dos semáforos). NO se
+fusiona probabilidad por paciente (cohortes no emparejadas).
+DEMO_MODE=True: tabular entrena al vuelo sobre patient_clean_ML.csv (REAL);
+imagen usa una SIMULACIÓN etiquetada (no es un modelo entrenado).
 ================================================================================
-Ejecutar:  streamlit run app.py
 """
 import os
+import hashlib
 import numpy as np
 import pandas as pd
 import streamlit as st
 
 # ------------------------------------------------------------------ CONFIG
-DEMO_MODE = True   # <<< PON False EN LA DEFENSA Y CARGA TUS MODELOS REALES
+DEMO_MODE = True
 CSV_PATH = "patient_clean_ML.csv"
 TABULAR_MODEL_PATH = "models/tabular_model.joblib"
 TABULAR_SCALER_PATH = "models/tabular_scaler.joblib"
 CNN_MODEL_PATH = "models/cnn_model.keras"
+
+# Credenciales del perfil Médico (cámbialas si quieres)
+MEDICO_USER = "a01352187"
+MEDICO_PASS = "Tesisfinalpro"
 
 CLASSES = ["Normal", "Osteopenia", "Osteoporosis"]
 COL = {"Normal": "#22c55e", "Osteopenia": "#f59e0b", "Osteoporosis": "#ef4444"}
@@ -35,8 +38,26 @@ FEATURE_ORDER = [
     'number_of_pregnancies', 'seizer_disorder', 'estrogen_use', 'dialysis',
     'family_history_of_osteoporosis', 'maximum_walking_distance_km', 'bmi_',
     'obesity', 'meno_registrada', 'fractura_previa', 'occupation_cod',
-    'dieta_restrictiva', 'antecedente_medico'
-]
+    'dieta_restrictiva', 'antecedente_medico']
+
+# Etiquetas legibles para el panel técnico
+FEATURE_LABELS = {
+    'joint_pain': 'Dolor articular', 'gender': 'Sexo (F=1)', 'age': 'Edad',
+    'menopause_age': 'Edad menopausia', 'height__meter': 'Estatura (m)',
+    'weight_kg_': 'Peso (kg)', 'smoker': 'Fumador', 'diabetic': 'Diabetes',
+    'hypothyroidism': 'Hipotiroidismo', 'number_of_pregnancies': 'Embarazos',
+    'seizer_disorder': 'Trastorno convulsivo', 'estrogen_use': 'Uso estrógenos',
+    'dialysis': 'Diálisis', 'family_history_of_osteoporosis': 'Antec. familiar',
+    'maximum_walking_distance_km': 'Caminata máx (km)', 'bmi_': 'IMC',
+    'obesity': 'Obesidad (0-3)', 'meno_registrada': 'Menopausia registrada',
+    'fractura_previa': 'Fractura previa', 'occupation_cod': 'Ocupación (cod)',
+    'dieta_restrictiva': 'Dieta restrictiva', 'antecedente_medico': 'Antec. médico'}
+
+# Métricas reales por modelo (de tu Cap. 5, out-of-fold) para el panel técnico
+TABULAR_METRICS = {
+    "Modelo (demo: Random Forest)": {
+        "Bal. Accuracy": "71.3%", "Macro-F1": "67.0%",
+        "Macro-AUC": "82.8%", "Sens. Osteoporosis": "65.3%"}}
 
 st.set_page_config(page_title="OSTEO-AI · Cribado multimodal",
                    page_icon="🦴", layout="wide",
@@ -47,48 +68,56 @@ st.markdown("""
 <style>
   .stApp { background: linear-gradient(160deg,#0f172a 0%,#1e293b 100%); }
   section[data-testid="stSidebar"] { background:#0b1220; }
-  h1,h2,h3,h4,h5, p, label, span, div { color:#e2e8f0; }
-  .brand { display:flex; align-items:center; gap:14px; margin-bottom:4px;}
+  h1,h2,h3,h4,h5,p,label,span,div { color:#e2e8f0; }
+  .brand { display:flex; align-items:center; gap:14px; margin-bottom:4px; }
   .brand .logo { font-size:40px; }
   .brand .title { font-size:30px; font-weight:800; letter-spacing:-.5px;
-                  background:linear-gradient(90deg,#38bdf8,#22c55e);
-                  -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+      background:linear-gradient(90deg,#38bdf8,#22c55e);
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
   .card { background:#111c33; border:1px solid #243049; border-radius:16px;
-          padding:22px; box-shadow:0 6px 24px rgba(0,0,0,.35); }
+      padding:22px; box-shadow:0 6px 24px rgba(0,0,0,.35); }
   .pill { display:inline-block; padding:4px 12px; border-radius:999px;
-          font-size:12px; font-weight:700; }
-  .stButton>button { background:linear-gradient(90deg,#0ea5e9,#22c55e);
-          color:white; font-weight:700; border:0; border-radius:12px;
-          padding:12px 0; font-size:17px; }
-  .stButton>button:hover { filter:brightness(1.08); }
-</style>
+      font-size:12px; font-weight:700; }
+  .metric-box { background:#0e1830; border:1px solid #243049; border-radius:12px;
+      padding:14px; text-align:center; }
+  .metric-box .v { font-size:24px; font-weight:800; }
+  .metric-box .l { font-size:12px; color:#94a3b8; }
   .role-card { background:#111c33; border:1px solid #243049; border-radius:20px;
-        padding:34px 26px; text-align:center; transition:.2s; }
+      padding:34px 26px; text-align:center; }
   .role-card .ico { font-size:58px; }
-  .role-card .rt  { font-size:22px; font-weight:800; margin-top:8px; }
-  .role-card .rd  { font-size:14px; color:#94a3b8; margin-top:6px; }
+  .role-card .rt { font-size:22px; font-weight:800; margin-top:8px; }
+  .role-card .rd { font-size:14px; color:#94a3b8; margin-top:6px; }
+  .stButton>button { background:linear-gradient(90deg,#0ea5e9,#22c55e);
+      color:white; font-weight:700; border:0; border-radius:12px;
+      padding:12px 0; font-size:17px; }
+  .stButton>button:hover { filter:brightness(1.08); }
 </style>
 """, unsafe_allow_html=True)
 
-# ------------------------------------------------------------------ ESTADO / LANDING
+# ------------------------------------------------------------------ ESTADO
 if "role" not in st.session_state:
     st.session_state.role = None
+if "medico_auth" not in st.session_state:
+    st.session_state.medico_auth = False
 
 def go_home():
     st.session_state.role = None
+    st.session_state.medico_auth = False
 
+# ------------------------------------------------------------------ LANDING
 def landing():
     st.markdown("<div class='brand' style='justify-content:center;margin-top:30px'>"
                 "<span class='logo' style='font-size:54px'>🦴</span>"
                 "<span class='title' style='font-size:40px'>OSTEO-AI</span></div>",
                 unsafe_allow_html=True)
     st.markdown("<p style='text-align:center;color:#94a3b8;font-size:17px'>"
-                "Sistema de cribado multimodal de osteoporosis</p>", unsafe_allow_html=True)
+                "Sistema de cribado multimodal de osteoporosis</p>",
+                unsafe_allow_html=True)
     st.write(""); st.write("")
     st.markdown("<h3 style='text-align:center'>¿Cómo deseas ingresar?</h3>",
                 unsafe_allow_html=True)
     st.write("")
-    c1, sp, c2 = st.columns([1, 0.15, 1])
+    c1, _, c2 = st.columns([1, 0.15, 1])
     with c1:
         st.markdown("<div class='role-card'><div class='ico'>👤</div>"
                     "<div class='rt'>Paciente</div>"
@@ -101,7 +130,7 @@ def landing():
         st.markdown("<div class='role-card'><div class='ico'>🩺</div>"
                     "<div class='rt'>Médico</div>"
                     "<div class='rd'>Vista técnica: probabilidades por clase, "
-                    "concordancia entre ramas y detalle del modelo.</div></div>",
+                    "concordancia entre ramas y detalle del modelo. Requiere acceso.</div></div>",
                     unsafe_allow_html=True)
         st.write("")
         if st.button("Entrar como Médico", use_container_width=True, key="b_med"):
@@ -110,12 +139,33 @@ def landing():
     st.caption("Herramienta de apoyo a la decisión clínica · No sustituye el juicio "
                "médico ni la DXA · Demo de tesis")
 
-# Si aún no se eligió rol -> mostrar landing y detener
-if st.session_state.role is None:
-    landing()
-    st.stop()
+# ------------------------------------------------------------------ LOGIN MÉDICO
+def login_medico():
+    st.markdown("<div class='brand' style='justify-content:center;margin-top:40px'>"
+                "<span class='logo' style='font-size:46px'>🩺</span>"
+                "<span class='title' style='font-size:32px'>Acceso Médico</span></div>",
+                unsafe_allow_html=True)
+    st.write("")
+    _, c, _ = st.columns([1, 1.2, 1])
+    with c:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        user = st.text_input("Usuario / ID", key="login_user")
+        pwd = st.text_input("Contraseña", type="password", key="login_pwd")
+        if st.button("Ingresar", use_container_width=True, key="do_login"):
+            if user.strip() == MEDICO_USER and pwd == MEDICO_PASS:
+                st.session_state.medico_auth = True; st.rerun()
+            else:
+                st.error("Credenciales incorrectas.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        if st.button("← Volver al inicio", use_container_width=True, key="back_login"):
+            go_home(); st.rerun()
 
-role = st.session_state.role  # rol confirmado desde aquí
+# Enrutamiento de acceso
+if st.session_state.role is None:
+    landing(); st.stop()
+if st.session_state.role == "🩺 Médico" and not st.session_state.medico_auth:
+    login_medico(); st.stop()
+role = st.session_state.role
 
 # ------------------------------------------------------------------ MODELOS
 @st.cache_resource
@@ -132,9 +182,8 @@ def get_tabular_model():
                   for c in df.columns]
     X = df[FEATURE_ORDER].values.astype(float)
     y = df['diagnosis_cod'].astype(int).values
-    model = RandomForestClassifier(n_estimators=300, max_depth=6,
-        min_samples_leaf=5, max_features='sqrt',
-        class_weight='balanced', random_state=42).fit(X, y)
+    model = RandomForestClassifier(n_estimators=300, max_depth=6, min_samples_leaf=5,
+        max_features='sqrt', class_weight='balanced', random_state=42).fit(X, y)
     return model, None
 
 @st.cache_resource
@@ -152,12 +201,18 @@ def predict_tabular(f):
     return model.predict_proba(x)[0]
 
 def predict_image(pil_image):
+    """Rama de imagen. En DEMO no hay CNN: se genera una distribución
+    PSEUDOALEATORIA pero DETERMINISTA por imagen (mismo archivo -> mismo
+    resultado, archivos distintos -> resultados distintos). NO es un modelo
+    entrenado; es solo para ilustrar el flujo de la interfaz."""
     cnn = get_cnn_model()
     if cnn is None:
-        arr = np.array(pil_image.convert("L").resize((64, 64)), float) / 255.0
-        m = arr.mean()
-        base = np.array([max(0.1, m), 0.33, max(0.1, 1 - m)])
-        return base / base.sum()
+        # hash del contenido de la imagen -> semilla -> distribución estable
+        buf = np.array(pil_image.convert("L").resize((64, 64)))
+        h = int(hashlib.md5(buf.tobytes()).hexdigest(), 16) % (2**32)
+        rng = np.random.default_rng(h)
+        p = rng.dirichlet([2.0, 1.5, 2.0])  # distribución plausible variada
+        return p
     size = (299, 299) if "inception" in CNN_MODEL_PATH.lower() else (224, 224)
     img = pil_image.convert("RGB").resize(size)
     x = np.expand_dims(np.array(img) / 255.0, 0)
@@ -165,9 +220,8 @@ def predict_image(pil_image):
 
 # ------------------------------------------------------------------ GAUGE
 def gauge_svg(proba):
-    """Semáforo tipo medidor: arco coloreado + aguja a la clase ganadora."""
     idx = int(np.argmax(proba)); pred = CLASSES[idx]
-    angle = -90 + idx * 90  # -90 Normal, 0 Osteopenia, +90 Osteoporosis
+    angle = -90 + idx * 90
     rad = np.radians(angle)
     cx, cy, r = 150, 150, 110
     nx, ny = cx + r * 0.8 * np.sin(rad), cy - r * 0.8 * np.cos(rad)
@@ -188,7 +242,7 @@ def gauge_svg(proba):
 
 def semaphore(proba, title):
     idx = int(np.argmax(proba)); pred = CLASSES[idx]
-    st.markdown(f"<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.markdown(f"<span class='pill' style='background:{COL[pred]}22;"
                 f"color:{COL[pred]}'>{title}</span>", unsafe_allow_html=True)
     st.markdown(gauge_svg(proba), unsafe_allow_html=True)
@@ -218,6 +272,23 @@ def patient_recommendations(f, pred):
     r.append("Una dieta rica en calcio y vitamina D apoya la salud ósea.")
     return r
 
+def clinical_risk_flags(f):
+    """Factores de riesgo detectados, para la vista médico."""
+    flags = []
+    if f['age'] >= 65: flags.append(("Edad ≥ 65 años", "alto"))
+    elif f['age'] >= 50: flags.append(("Edad 50-64 años", "moderado"))
+    if f['gender'] == 1 and f['meno_registrada'] == 1: flags.append(("Mujer posmenopáusica", "alto"))
+    if f['bmi_'] < 19: flags.append(("IMC bajo (< 19)", "alto"))
+    if f['fractura_previa'] == 1: flags.append(("Fractura previa", "alto"))
+    if f['family_history_of_osteoporosis'] == 1: flags.append(("Antecedente familiar", "moderado"))
+    if f['smoker'] == 1: flags.append(("Tabaquismo", "moderado"))
+    if f['hypothyroidism'] == 1: flags.append(("Hipotiroidismo", "moderado"))
+    if f['estrogen_use'] == 0 and f['gender'] == 1 and f['meno_registrada'] == 1:
+        flags.append(("Sin terapia estrogénica", "moderado"))
+    if f['maximum_walking_distance_km'] < 1: flags.append(("Sedentarismo", "moderado"))
+    if not flags: flags.append(("Sin factores de riesgo mayores detectados", "bajo"))
+    return flags
+
 # ------------------------------------------------------------------ SIDEBAR
 st.sidebar.markdown("<div class='brand'><span class='logo'>🦴</span>"
                     "<span class='title'>OSTEO-AI</span></div>", unsafe_allow_html=True)
@@ -229,8 +300,10 @@ st.sidebar.divider()
 modality = st.sidebar.radio("Datos a ingresar",
                             ["Solo datos clínicos", "Solo radiografía", "Ambos"])
 if DEMO_MODE:
-    st.sidebar.warning("MODO DEMO: las predicciones de imagen son simuladas. "
-                       "Pon DEMO_MODE=False para usar modelos reales.")
+    st.sidebar.warning("MODO DEMO: la rama tabular es real (entrenada sobre el "
+                       "dataset clínico). La rama de imagen es una SIMULACIÓN "
+                       "(no es una CNN entrenada). Conecta tu modelo y pon "
+                       "DEMO_MODE=False para usarla de verdad.")
 
 # ------------------------------------------------------------------ FORMS
 def tabular_form():
@@ -299,6 +372,7 @@ if run:
     if proba_tab is None and proba_img is None:
         st.error("Ingresa al menos una modalidad."); st.stop()
 
+    # ----------------- VISTA PACIENTE -----------------
     if role == "👤 Paciente":
         both = proba_tab is not None and proba_img is not None
         cols = st.columns(2) if both else [st.container()]
@@ -307,8 +381,7 @@ if run:
             with cols[0]: primary = semaphore(proba_tab, "Datos clínicos")
         if proba_img is not None:
             with (cols[1] if both else cols[0]):
-                p2 = semaphore(proba_img, "Radiografía")
-                primary = primary or p2
+                p2 = semaphore(proba_img, "Radiografía"); primary = primary or p2
         st.divider(); st.markdown("### 💡 Recomendaciones para ti")
         ref = features if features else {k: 0 for k in FEATURE_ORDER}
         if not features:
@@ -316,6 +389,8 @@ if run:
                         'family_history_of_osteoporosis': 0, 'maximum_walking_distance_km': 2})
         for x in patient_recommendations(ref, primary): st.markdown(f"- {x}")
         st.info("Resultado orientativo. Acude con un profesional de salud para valoración completa.")
+
+    # ----------------- VISTA MÉDICO -----------------
     else:
         if proba_tab is not None and proba_img is not None:
             st.markdown("## Evaluación multimodal · ramas independientes")
@@ -324,20 +399,70 @@ if run:
             with b: pi = semaphore(proba_img, "Rama de imagen (CNN)")
             st.divider()
             if pt == pi:
-                st.success(f"**Concordancia:** ambas ramas indican **{pt}**. Mayor confianza.")
+                st.success(f"**Concordancia entre modalidades:** ambas indican **{pt}**. Mayor confianza.")
             else:
                 st.warning(f"**Discordancia clínica:** tabular sugiere **{pt}** e imagen **{pi}**. "
-                           f"Esta divergencia es información relevante; considerar DXA confirmatoria.")
+                           f"Divergencia relevante; considerar DXA confirmatoria.")
         elif proba_tab is not None:
-            semaphore(proba_tab, "Rama tabular (ML)")
+            pt = semaphore(proba_tab, "Rama tabular (ML)")
         else:
-            semaphore(proba_img, "Rama de imagen (CNN)")
-        st.divider(); st.markdown("### 📊 Detalle técnico")
+            pi = semaphore(proba_img, "Rama de imagen (CNN)")
+
+        # ---- Panel técnico enriquecido ----
+        st.divider(); st.markdown("### 📊 Panel técnico")
+
+        # Probabilidades
         rows = []
         if proba_tab is not None: rows.append(["Tabular (ML)"] + [f"{p*100:.2f}%" for p in proba_tab])
         if proba_img is not None: rows.append(["Imagen (CNN)"] + [f"{p*100:.2f}%" for p in proba_img])
+        st.markdown("**Probabilidades por clase**")
         st.table(pd.DataFrame(rows, columns=["Rama"] + CLASSES))
+
+        # Métricas de desempeño del modelo tabular (de tu Cap. 5)
+        if proba_tab is not None:
+            st.markdown("**Desempeño del modelo tabular** (validación 5-fold, Cap. 5)")
+            m = list(TABULAR_METRICS.values())[0]
+            mc = st.columns(4)
+            for col, (k, v) in zip(mc, m.items()):
+                col.markdown(f"<div class='metric-box'><div class='v'>{v}</div>"
+                             f"<div class='l'>{k}</div></div>", unsafe_allow_html=True)
+
+        # Factores de riesgo clínico detectados
+        if features is not None:
+            st.write("")
+            st.markdown("**Factores de riesgo clínico detectados**")
+            fc = clinical_risk_flags(features)
+            color_map = {"alto": "#ef4444", "moderado": "#f59e0b", "bajo": "#22c55e"}
+            chips = " ".join(
+                f"<span class='pill' style='background:{color_map[lvl]}22;"
+                f"color:{color_map[lvl]};margin:3px'>{txt}</span>" for txt, lvl in fc)
+            st.markdown(chips, unsafe_allow_html=True)
+
+        # Confianza y margen de decisión
+        if proba_tab is not None:
+            st.write("")
+            srt = np.sort(proba_tab)[::-1]
+            margin = (srt[0] - srt[1]) * 100
+            entropy = -np.sum(proba_tab * np.log(proba_tab + 1e-9))
+            cc = st.columns(3)
+            cc[0].markdown(f"<div class='metric-box'><div class='v'>{srt[0]*100:.1f}%</div>"
+                           f"<div class='l'>Confianza (clase top)</div></div>", unsafe_allow_html=True)
+            cc[1].markdown(f"<div class='metric-box'><div class='v'>{margin:.1f} pts</div>"
+                           f"<div class='l'>Margen 1ª vs 2ª clase</div></div>", unsafe_allow_html=True)
+            cc[2].markdown(f"<div class='metric-box'><div class='v'>{entropy:.2f}</div>"
+                           f"<div class='l'>Entropía (incertidumbre)</div></div>", unsafe_allow_html=True)
+            if margin < 10:
+                st.warning("Margen de decisión bajo (< 10 pts): predicción de baja "
+                           "certeza. Se recomienda valoración clínica adicional.")
+
+        # Vector de features
         if features:
-            with st.expander("Ver vector de features ingresado"): st.json({k: features[k] for k in FEATURE_ORDER})
-        st.caption("Recordatorio: las dos ramas se entrenaron en cohortes distintas y se reportan "
-                   "por separado; no se computa una probabilidad fusionada por paciente.")
+            with st.expander("Ver vector de features ingresado (22 variables)"):
+                tab = pd.DataFrame(
+                    [(FEATURE_LABELS[k], features[k]) for k in FEATURE_ORDER],
+                    columns=["Variable", "Valor"])
+                st.dataframe(tab, use_container_width=True, hide_index=True)
+
+        st.caption("Recordatorio metodológico: las dos ramas se entrenaron en cohortes "
+                   "distintas y se reportan por separado; no se computa una probabilidad "
+                   "fusionada por paciente. En modo demo la rama de imagen es simulada.")
