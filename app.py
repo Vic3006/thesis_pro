@@ -19,12 +19,25 @@ import streamlit as st
 
 # ------------------------------------------------------------------ CONFIG
 DEMO_MODE = True          # rama TABULAR: True entrena RF al vuelo sobre el CSV
-IMAGE_REAL = True         # rama IMAGEN: True usa la CNN real models/cnn_model.keras
 CSV_PATH = "patient_clean_ML.csv"
 TABULAR_MODEL_PATH = "models/tabular_model.joblib"
 TABULAR_SCALER_PATH = "models/tabular_scaler.joblib"
 CNN_MODEL_PATH = "models/cnn_model.keras"
 IMG_SIZE = (299, 299)     # InceptionV3
+
+# IMAGE_REAL se autodetecta: usa la CNN real SOLO si TensorFlow, OpenCV y el
+# archivo del modelo están disponibles (caso laptop local). En Streamlit Cloud,
+# donde no se instala TensorFlow, cae automáticamente a modo simulado y NO falla.
+def _detect_image_real():
+    if not os.path.exists(CNN_MODEL_PATH):
+        return False
+    try:
+        import tensorflow  # noqa
+        import cv2  # noqa
+        return True
+    except Exception:
+        return False
+IMAGE_REAL = _detect_image_real()
 
 # Credenciales del perfil Médico (cámbialas si quieres)
 MEDICO_USER = "a01352187"
