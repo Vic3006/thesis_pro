@@ -18,11 +18,13 @@ import pandas as pd
 import streamlit as st
 
 # ------------------------------------------------------------------ CONFIG
-DEMO_MODE = True
+DEMO_MODE = True          # rama TABULAR: True entrena RF al vuelo sobre el CSV
+IMAGE_REAL = True         # rama IMAGEN: True usa la CNN real models/cnn_model.keras
 CSV_PATH = "patient_clean_ML.csv"
 TABULAR_MODEL_PATH = "models/tabular_model.joblib"
 TABULAR_SCALER_PATH = "models/tabular_scaler.joblib"
 CNN_MODEL_PATH = "models/cnn_model.keras"
+IMG_SIZE = (299, 299)     # InceptionV3
 
 # Credenciales del perfil Médico (cámbialas si quieres)
 MEDICO_USER = "a01352187"
@@ -188,10 +190,22 @@ def get_tabular_model():
 
 @st.cache_resource
 def get_cnn_model():
-    if DEMO_MODE:
+    if not IMAGE_REAL:
         return None
     from tensorflow import keras
     return keras.models.load_model(CNN_MODEL_PATH)
+
+def _preprocess_clahe(img_rgb_uint8):
+    """Replica EXACTA del preprocesamiento de entrenamiento:
+    filtro bilateral (d=5, sigma=75) + CLAHE (clip=3.0, tiles 8x8).
+    El preprocess_input de InceptionV3 ya está DENTRO del modelo (capa
+    inicial), por lo que aquí se devuelve el rango 0-255 en float32."""
+    import cv2
+    gray = cv2.cvtColor(img_rgb_uint8, cv2.COLOR_RGB2GRAY)
+    blur = cv2.bilateralFilter(gray, d=5, sigmaColor=75, sigmaSpace=75)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(blur)
+    return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB).astype(np.float32)
 
 def predict_tabular(f):
     model, scaler = get_tabular_model()
@@ -201,21 +215,18 @@ def predict_tabular(f):
     return model.predict_proba(x)[0]
 
 def predict_image(pil_image):
-    """Rama de imagen. En DEMO no hay CNN: se genera una distribución
-    PSEUDOALEATORIA pero DETERMINISTA por imagen (mismo archivo -> mismo
-    resultado, archivos distintos -> resultados distintos). NO es un modelo
-    entrenado; es solo para ilustrar el flujo de la interfaz."""
+    """Rama de imagen. Si IMAGE_REAL=True usa la CNN InceptionV3+CLAHE real
+    con el preprocesamiento idéntico al de entrenamiento. Si no, usa una
+    SIMULACIÓN determinista por imagen (solo para ilustrar el flujo)."""
     cnn = get_cnn_model()
     if cnn is None:
-        # hash del contenido de la imagen -> semilla -> distribución estable
         buf = np.array(pil_image.convert("L").resize((64, 64)))
         h = int(hashlib.md5(buf.tobytes()).hexdigest(), 16) % (2**32)
         rng = np.random.default_rng(h)
-        p = rng.dirichlet([2.0, 1.5, 2.0])  # distribución plausible variada
-        return p
-    size = (299, 299) if "inception" in CNN_MODEL_PATH.lower() else (224, 224)
-    img = pil_image.convert("RGB").resize(size)
-    x = np.expand_dims(np.array(img) / 255.0, 0)
+        return rng.dirichlet([2.0, 1.5, 2.0])
+    img = pil_image.convert("RGB").resize(IMG_SIZE)
+    proc = _preprocess_clahe(np.array(img))
+    x = np.expand_dims(proc, 0)
     return cnn.predict(x, verbose=0)[0]
 
 # ------------------------------------------------------------------ GAUGE
@@ -299,11 +310,13 @@ if st.sidebar.button("← Cambiar de perfil", use_container_width=True):
 st.sidebar.divider()
 modality = st.sidebar.radio("Datos a ingresar",
                             ["Solo datos clínicos", "Solo radiografía", "Ambos"])
-if DEMO_MODE:
-    st.sidebar.warning("MODO DEMO: la rama tabular es real (entrenada sobre el "
-                       "dataset clínico). La rama de imagen es una SIMULACIÓN "
-                       "(no es una CNN entrenada). Conecta tu modelo y pon "
-                       "DEMO_MODE=False para usarla de verdad.")
+if DEMO_MODE and not IMAGE_REAL:
+    st.sidebar.warning("MODO DEMO: rama tabular real (entrenada sobre el dataset); "
+                       "rama de imagen SIMULADA.")
+elif IMAGE_REAL:
+    st.sidebar.info("Rama de imagen: CNN InceptionV3+CLAHE real. "
+                    "Rama tabular: " + ("modelo demo (RF al vuelo)." if DEMO_MODE
+                    else "modelo cargado."))
 
 # ------------------------------------------------------------------ FORMS
 def tabular_form():
