@@ -62,7 +62,60 @@ st.markdown("""
           padding:12px 0; font-size:17px; }
   .stButton>button:hover { filter:brightness(1.08); }
 </style>
+  .role-card { background:#111c33; border:1px solid #243049; border-radius:20px;
+        padding:34px 26px; text-align:center; transition:.2s; }
+  .role-card .ico { font-size:58px; }
+  .role-card .rt  { font-size:22px; font-weight:800; margin-top:8px; }
+  .role-card .rd  { font-size:14px; color:#94a3b8; margin-top:6px; }
+</style>
 """, unsafe_allow_html=True)
+
+# ------------------------------------------------------------------ ESTADO / LANDING
+if "role" not in st.session_state:
+    st.session_state.role = None
+
+def go_home():
+    st.session_state.role = None
+
+def landing():
+    st.markdown("<div class='brand' style='justify-content:center;margin-top:30px'>"
+                "<span class='logo' style='font-size:54px'>🦴</span>"
+                "<span class='title' style='font-size:40px'>OSTEO-AI</span></div>",
+                unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center;color:#94a3b8;font-size:17px'>"
+                "Sistema de cribado multimodal de osteoporosis</p>", unsafe_allow_html=True)
+    st.write(""); st.write("")
+    st.markdown("<h3 style='text-align:center'>¿Cómo deseas ingresar?</h3>",
+                unsafe_allow_html=True)
+    st.write("")
+    c1, sp, c2 = st.columns([1, 0.15, 1])
+    with c1:
+        st.markdown("<div class='role-card'><div class='ico'>👤</div>"
+                    "<div class='rt'>Paciente</div>"
+                    "<div class='rd'>Vista simplificada con resultado tipo semáforo "
+                    "y recomendaciones personalizadas.</div></div>", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Entrar como Paciente", use_container_width=True, key="b_pac"):
+            st.session_state.role = "👤 Paciente"; st.rerun()
+    with c2:
+        st.markdown("<div class='role-card'><div class='ico'>🩺</div>"
+                    "<div class='rt'>Médico</div>"
+                    "<div class='rd'>Vista técnica: probabilidades por clase, "
+                    "concordancia entre ramas y detalle del modelo.</div></div>",
+                    unsafe_allow_html=True)
+        st.write("")
+        if st.button("Entrar como Médico", use_container_width=True, key="b_med"):
+            st.session_state.role = "🩺 Médico"; st.rerun()
+    st.write(""); st.write("")
+    st.caption("Herramienta de apoyo a la decisión clínica · No sustituye el juicio "
+               "médico ni la DXA · Demo de tesis")
+
+# Si aún no se eligió rol -> mostrar landing y detener
+if st.session_state.role is None:
+    landing()
+    st.stop()
+
+role = st.session_state.role  # rol confirmado desde aquí
 
 # ------------------------------------------------------------------ MODELOS
 @st.cache_resource
@@ -169,7 +222,9 @@ def patient_recommendations(f, pred):
 st.sidebar.markdown("<div class='brand'><span class='logo'>🦴</span>"
                     "<span class='title'>OSTEO-AI</span></div>", unsafe_allow_html=True)
 st.sidebar.caption("Cribado multimodal de osteoporosis · Demo de tesis")
-role = st.sidebar.radio("Perfil de usuario", ["👤 Paciente", "🩺 Médico"])
+st.sidebar.markdown(f"**Perfil activo:** {role}")
+if st.sidebar.button("← Cambiar de perfil", use_container_width=True):
+    go_home(); st.rerun()
 st.sidebar.divider()
 modality = st.sidebar.radio("Datos a ingresar",
                             ["Solo datos clínicos", "Solo radiografía", "Ambos"])
